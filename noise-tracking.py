@@ -2,7 +2,9 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
-
+import numpy.linalg
+import scipy.special as sc
+import scipy.io 
 
 class FastNoiseTracking:
 
@@ -32,7 +34,7 @@ class FastNoiseTracking:
 
             self.state.frame_length = noisy_psd.shape[0]*2-2 
 
-            self.state.K = self.state.frame_length/2+1
+            self.state.K = int(self.state.frame_length/2+1)
 
             self.state.gamma_buf = np.zeros((self.state.K,self.state.deltal+1),dtype=np.float32)
 
@@ -40,7 +42,11 @@ class FastNoiseTracking:
 
             self.state.noise_psd = noisy_psd
 
-            gamma_ = noisyPsd/self.state.noise_psd
+            gamma_ = noisy_psd/self.state.noise_psd
+
+            self.state.gamma_buf[:,self.state.gamma_buf_pos] = gamma_
+
+            self.state.gamma_buf_pos += 1
 
             self.state.p = np.zeros((self.state.K,), dtype=np.float32)
 
@@ -66,17 +72,21 @@ class FastNoiseTracking:
 
             N2 = self.state.noise_psd
 
+            self.state.frame_number += 1
+
             return N2
+
+        self.state.frame_number += 1
 
         gamma_ = noisy_psd/self.state.noise_psd
 
         ksi = np.maximum(self.state.alpha_ns * previous_frame_speech_psd / self.state.noise_psd + (1 - self.state.alpha_ns) * np.maximum(gamma_ - 1, 0), self.state.ksi_floor)
+#
+        v = gamma_/(ksi*(ksi+1))
 
-        v = gamma_/(ksi%(ksi+1))
+        N = 1/(ksi+1)**2 * np.exp(np.minimum(sc.gamma(1.e-5)*sc.gammaincc(1e-5,v),10))*np.sqrt(noisy_psd)
 
-        N = 1/(ksi+1)**2 * np.exp(np.minimum(sc.gamma(1.e-5)*gammaincc(1e-5,v),10))%np.sqrt(noisy_psd)
-
-        N2 = N % np.conjugate(N)
+        N2 = N * np.conjugate(N)
 
         self.state.gamma_buf[:,self.state.gamma_buf_pos] = gamma_
 
@@ -86,44 +96,42 @@ class FastNoiseTracking:
             
             self.state.gamma_buf_pos = 0
 
-        gamma_avg = np.mean(self.state.gamma_buf[:,:np.amin([self.state.frame_number,2])], axis = 1)
+        gamma_avg = np.mean(self.state.gamma_buf[:,:np.amin([self.state.frame_number,3])], axis = 1)
 
-        gamma_avg_frequency = gamma_avg
+        gamma_avg_frequency = np.zeros_like(gamma_avg)
 
         for i in range(self.state.K):
 
-            gamma_avg_frequency[i] = np.mean(gamma_avg[np.amax([i-self.state.deltak,0]:np.amin([i+self.state.deltak,self.state.K]))])
+            gamma_avg_frequency[i] = np.mean(gamma_avg[np.amax([i-self.state.deltak,0]):np.amin([i+self.state.deltak+1,self.state.K])])
 
-        I = gamma_avg_frequency > self.state.psi
+        I = np.uint32(gamma_avg_frequency > self.state.psi)
 
-        self.state.p = self.state.alpha_p * self.state.p + (1-self.state.alpha_p)%I
+        self.state.p = self.state.alpha_p * self.state.p + (1-self.state.alpha_p)*I
 
-        alpha_N = self.state.alpha_n+(1-self.state.slpha_n)*self.state.p
+        alpha_N = self.state.alpha_n+(1-self.state.alpha_n)*self.state.p
 
-        self.state.noise_psd = alpha_N % self.state.noise_psd + (1 -alpha_N) % N2
-
-        self.state.frame_number += 1
+        self.state.noise_psd = alpha_N * self.state.noise_psd + (1 -alpha_N) * N2
 
         return self.state.noise_psd 
 
 
 if __name__ == "__main__":
 
-    test_psd = np.random.randn(129,10).astype(np.float32)
+    noise_tracking = FastNoiseTracking(8000) # load synthetic test data
 
-    test_clean_psd = np.random.randn(129,10).astype(np.float32)
+    mat = scipy.io.loadmat('./test-data/stencil.mat')
 
-    test_psd = test_psd%test_psd
-
-    test_clean_psd = test_clean_psd%test_clean_psd
-
-    noise_tracking = FastNoiseTracking(8000)
-
-    noise_psds = np.zeros_like(test_psd)
+    result = np.zeros_like(mat['noisy_psd'])
 
     for i in range(10):
 
-        noise_psds[:,i] = noise_tracking.get_noise_psd(teest_psd[:,i], test_clean_psd[:,i])
+        result[:,i] = noise_tracking.get_noise_psd(mat['noisy_psd'][:,i], mat['prev_clean_speech_estimates'][:,i])
+
+
+    if numpy.linalg.norm(mat['stencil']-result,ord='fro') < 1.e-7:
+        print("Test passed ...")
+    else:
+        print("Test failed ...")
 
 
 
