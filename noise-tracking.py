@@ -29,6 +29,16 @@ class FastNoiseTracking:
 
 
     def get_noise_psd(self, noisy_psd : np.ndarray, previous_frame_speech_psd : np.ndarray) -> np.ndarray:
+        """Computes the estimate of the noise spectrum based on previous frame clean speech spectrum and \
+        current frame noisy spectrum.
+
+        :param noisy_psd: noisy frame power density spectrum, vector of length frame_length/2+1
+        :type noisy_psd: np.ndarray
+        :param previous_frame_speech_psd: previous frame clean speech power density spectrum estimate
+        :type previous_frame_speech_psd: np.ndarray
+        :return: noise power density spectrum estimate
+        :rtype: np.ndarray
+        """
 
         if self.state.frame_number == 0:
 
